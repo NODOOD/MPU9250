@@ -242,6 +242,8 @@ public:
     
     int calib_data[3];
     float Magnetometer_ASA[3];
+	float mag_bias[3] = {-29, 34, -46};// magnetometer bias, nodood
+	float bias_mag(float *bias);// magnetometer bias calculation, nodood
  
     float accel_data[3];
     float temperature;
