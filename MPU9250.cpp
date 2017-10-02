@@ -112,8 +112,8 @@ bool MPU9250::init(bool calib_gyro, bool calib_acc){
         delayMicroseconds(1000);  // I2C must slow down the write speed, otherwise it won't work
     }
 
-    set_acc_scale(BITS_FS_2G);
-    set_gyro_scale(BITS_FS_250DPS);
+    set_acc_scale(BITS_FS_4G);
+    set_gyro_scale(BITS_FS_1000DPS);
     
     calib_mag();  // If experiencing problems here, just comment it out. Should still be somewhat functional.
     return 0;
@@ -232,7 +232,7 @@ void MPU9250::read_acc()
     for(i = 0; i < 3; i++) {
         bit_data = ((int16_t)response[i*2]<<8)|response[i*2+1];
         data = (float)bit_data;
-        accel_data[i] = data/acc_divider - a_bias[i];
+        accel_data[i] = data/acc_divider ;//- a_bias[i];
     }
     
 }
@@ -254,7 +254,7 @@ void MPU9250::read_gyro()
     for(i = 0; i < 3; i++) {
         bit_data = ((int16_t)response[i*2]<<8) | response[i*2+1];
         data = (float)bit_data;
-        gyro_data[i] = data/gyro_divider - g_bias[i];
+        gyro_data[i] = (data /gyro_divider - g_bias[i]);
     }
 
 }
@@ -319,17 +319,19 @@ uint8_t MPU9250::AK8963_whoami(){
 }
 
 void MPU9250::calib_mag(){
+	
+	
     uint8_t response[3];
     float data;
     int i;
     // Choose either 14-bit or 16-bit magnetometer resolution
-    //uint8_t MFS_14BITS = 0; // 0.6 mG per LSB
+    uint8_t MFS_14BITS = 0; // 0.6 mG per LSB
     uint8_t MFS_16BITS =1; // 0.15 mG per LSB
     // 2 for 8 Hz, 6 for 100 Hz continuous magnetometer data read
     uint8_t M_8HZ = 0x02; // 8 Hz update
-    //uint8_t M_100HZ = 0x06; // 100 Hz continuous magnetometer
+    uint8_t M_100HZ = 0x06; // 100 Hz continuous magnetometer
 
-    /* get the magnetometer calibration */
+   ///get the magnetometer calibration 
 
     WriteReg(MPUREG_I2C_SLV0_ADDR,AK8963_I2C_ADDR|READ_FLAG);   // Set the I2C slave    addres of AK8963 and set for read.
     WriteReg(MPUREG_I2C_SLV0_REG, AK8963_ASAX);                 // I2C slave 0 register address from where to begin data transfer
@@ -348,17 +350,52 @@ void MPU9250::calib_mag(){
     //response=WriteReg(MPUREG_I2C_SLV0_DO, 0x00);              // Read I2C 
     for(i = 0; i < 3; i++) {
         data=response[i];
+		
         Magnetometer_ASA[i] = ((data-128)/256+1)*Magnetometer_Sensitivity_Scale_Factor;
     }
+	
+	
+	//Magnetometer_ASA[2] = Magnetometer_Sensitivity_Scale_Factor * -0.6875f;
     WriteReg(AK8963_CNTL1, 0x00); // set AK8963 to Power Down
     delayMicroseconds(50000);
     // Configure the magnetometer for continuous read and highest resolution.
     // Set bit 4 to 1 (0) to enable 16 (14) bit resolution in CNTL
     // register, and enable continuous mode data acquisition (bits [3:0]),
     // 0010 for 8 Hz and 0110 for 100 Hz sample rates.   
-    WriteReg(AK8963_CNTL1, MFS_16BITS << 4 | M_8HZ);            // Set magnetometer data resolution and sample ODR
+    WriteReg(AK8963_CNTL1, MFS_16BITS << 4 | M_100HZ);            // Set magnetometer data resolution and sample ODR
     delayMicroseconds(50000);
+	
+	
 }
+
+float MPU9250::bias_mag(float *bias){
+	// calculate bias by seeking for the max and min values on all axis.
+	 mag_bias[0] = 0;
+	 mag_bias[1] = 0;
+	 mag_bias[2] = 0;
+	float Xmax = -10000.0f, Xmin = 1000.0f, Ymax = -1000.0f, Ymin = 10000.0f, Zmax = -10000.0f, Zmin = 10000.0f;;//
+    for( int i = 0; i < 1000; i++){
+    read_mag();
+
+
+    if( mag_data[0] > Xmax){ Xmax = mag_data[0];}else if( mag_data[0] < Xmin){ Xmin = mag_data[0];}
+    if( mag_data[1] > Ymax){ Ymax = mag_data[1];}else if( mag_data[1] < Ymin){ Ymin = mag_data[1];}
+    if( mag_data[2] > Zmax){ Zmax = mag_data[2];}else if( mag_data[2] < Zmin){ Zmin = mag_data[2];}
+
+    delay(100);
+  }
+
+	bias[0] = Xmax - abs( ( Xmax - Xmin ) / 2.0f );
+	bias[1] = Ymax - abs( ( Ymax - Ymin ) / 2.0f );
+	bias[2] = Zmax - abs( ( Zmax - Zmin ) / 2.0f );
+
+	
+	
+}
+
+
+
+
 
 void MPU9250::read_mag(){
     uint8_t response[7];
@@ -375,7 +412,7 @@ void MPU9250::read_mag(){
     for(i = 0; i < 3; i++) {
         mag_data_raw[i] = ((int16_t)response[i*2+1]<<8)|response[i*2];
         data = (float)mag_data_raw[i];
-        mag_data[i] = data*Magnetometer_ASA[i];
+        mag_data[i] = data*Magnetometer_ASA[i] + mag_bias[i]; /// added bias, nodood
     }
 }
 
@@ -421,7 +458,7 @@ void MPU9250::read_all(){
     for(i=7; i < 10; i++) {
         mag_data_raw[i-7] = ((int16_t)response[i*2+1]<<8) | response[i*2];
         data = (float)mag_data_raw[i-7];
-        mag_data[i-7] = data * Magnetometer_ASA[i-7];
+        mag_data[i-7] = data * Magnetometer_ASA[i-7] + + mag_bias[i];/// added bias, nodood
     }
 }
 
